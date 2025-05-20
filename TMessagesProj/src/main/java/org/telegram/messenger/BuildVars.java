@@ -63,6 +63,7 @@ public class BuildVars {
         if (!BillingController.getInstance().isReady() || BillingController.PREMIUM_PRODUCT_DETAILS == null) {
             return false;
         }
+        assert BillingController.PREMIUM_PRODUCT_DETAILS.getSubscriptionOfferDetails() != null;
         for (ProductDetails.SubscriptionOfferDetails offerDetails : BillingController.PREMIUM_PRODUCT_DETAILS.getSubscriptionOfferDetails()) {
             for (ProductDetails.PricingPhase phase : offerDetails.getPricingPhases().getPricingPhaseList()) {
                 for (String cur : MessagesController.getInstance(UserConfig.selectedAccount).directPaymentsCurrency) {
