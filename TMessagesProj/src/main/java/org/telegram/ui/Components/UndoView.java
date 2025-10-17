@@ -59,6 +59,7 @@ import org.telegram.tgnet.TLObject;
 import org.telegram.tgnet.TLRPC;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
+import org.telegram.ui.Components.Forum.ForumUtilities;
 import org.telegram.ui.Components.Premium.boosts.BoostRepository;
 import org.telegram.ui.PaymentFormActivity;
 
@@ -759,7 +760,7 @@ public class UndoView extends FrameLayout {
                     infoText = AndroidUtilities.replaceTags(LocaleController.formatString(R.string.VoipGroupRemovedFromGroup, name));
                 }
                 subInfoText = null;
-                icon = R.raw.voip_group_removed;
+                icon = R.raw.ic_ban;
                 timeLeft = 3000;
             } else if (action == ACTION_OWNER_TRANSFERED_CHANNEL || action == ACTION_OWNER_TRANSFERED_GROUP) {
                 TLRPC.User user = (TLRPC.User) infoObject;
@@ -1073,10 +1074,15 @@ public class UndoView extends FrameLayout {
                         if (DialogObject.isChatDialog(did)) {
                             TLRPC.Chat chat = MessagesController.getInstance(currentAccount).getChat(-did);
                             TLRPC.TL_forumTopic topic = (TLRPC.TL_forumTopic) infoObject2;
+                            String mfTitle = null;
+                            if (ChatObject.isMonoForum(chat)) {
+                                mfTitle = ForumUtilities.getMonoForumTitle(currentAccount, chat);
+                            }
+
                             if (count == 1) {
-                                infoTextView.setText(AndroidUtilities.replaceTags(LocaleController.formatString("FwdMessageToGroup", R.string.FwdMessageToGroup, topic != null ? topic.title : chat.title)));
+                                infoTextView.setText(AndroidUtilities.replaceTags(LocaleController.formatString("FwdMessageToGroup", R.string.FwdMessageToGroup, mfTitle != null ? mfTitle : (topic != null ? topic.title : chat.title))));
                             } else {
-                                infoTextView.setText(AndroidUtilities.replaceTags(LocaleController.formatString("FwdMessagesToGroup", R.string.FwdMessagesToGroup, topic != null ? topic.title : chat.title)));
+                                infoTextView.setText(AndroidUtilities.replaceTags(LocaleController.formatString("FwdMessagesToGroup", R.string.FwdMessagesToGroup, mfTitle != null ? mfTitle : (topic != null ? topic.title : chat.title))));
                             }
                         } else {
                             TLRPC.User user = MessagesController.getInstance(currentAccount).getUser(did);
@@ -1507,7 +1513,9 @@ public class UndoView extends FrameLayout {
             } else {
                 if (DialogObject.isChatDialog(did)) {
                     TLRPC.Chat chat = MessagesController.getInstance(currentAccount).getChat(-did);
-                    if (ChatObject.isChannel(chat) && !chat.megagroup) {
+                    if (ChatObject.isMonoForum(chat)) {
+                        infoTextView.setText(LocaleController.getString(R.string.MonoforumDeletedUndo));
+                    } else if (ChatObject.isChannel(chat) && !chat.megagroup) {
                         infoTextView.setText(LocaleController.getString(R.string.ChannelDeletedUndo));
                     } else {
                         infoTextView.setText(LocaleController.getString(R.string.GroupDeletedUndo));

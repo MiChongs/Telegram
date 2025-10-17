@@ -120,10 +120,17 @@ public class FileLog {
                     FileLog.getInstance().tlStreamWriter.write("\n\n");
                     FileLog.getInstance().tlStreamWriter.flush();
 
-                    Log.d(mtproto_tag, metadata);
-                    Log.d(mtproto_tag, req);
-                    Log.d(mtproto_tag, finalRes);
-                    Log.d(mtproto_tag, " ");
+                    if (error != null) {
+                        Log.e(mtproto_tag, metadata);
+                        Log.e(mtproto_tag, req);
+                        Log.e(mtproto_tag, finalRes);
+                        Log.e(mtproto_tag, " ");
+                    } else {
+                        Log.d(mtproto_tag, metadata);
+                        Log.d(mtproto_tag, req);
+                        Log.d(mtproto_tag, finalRes);
+                        Log.d(mtproto_tag, " ");
+                    }
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
@@ -173,7 +180,7 @@ public class FileLog {
     private static void checkGson() {
         if (gson == null) {
             privateFields = new HashSet<>();
-//            privateFields.add("message");
+            privateFields.add("message");
             privateFields.add("phone");
             privateFields.add("about");
             privateFields.add("status_text");
@@ -187,6 +194,9 @@ public class FileLog {
             privateFields.add("mContext");
             privateFields.add("priority");
             privateFields.add("constructor");
+            for (int i = 0; i < 32; i++) {
+                privateFields.add("FLAG_" + i);
+            }
 
             //exclude file loading
             excludeRequests = new HashSet<>();
@@ -460,8 +470,8 @@ public class FileLog {
     }
 
     private static long dumpedHeap;
-    private void dumpMemory() {
-        if (System.currentTimeMillis() - dumpedHeap < 30_000) return;
+    public void dumpMemory(boolean force) {
+        if (!force && System.currentTimeMillis() - dumpedHeap < 30_000) return;
         dumpedHeap = System.currentTimeMillis();
         try {
             Debug.dumpHprofData(new File(AndroidUtilities.getLogsDir(), getInstance().dateFormat.format(System.currentTimeMillis()) + "_heap.hprof").getAbsolutePath());
@@ -486,7 +496,7 @@ public class FileLog {
         }
 
         FileLog.e("ANR thread dump\n" + sb.toString());
-        dumpMemory();
+        dumpMemory(false);
     }
 
     public static void fatal(final Throwable e, boolean logToAppCenter) {
@@ -494,7 +504,7 @@ public class FileLog {
             return;
         }
         if (e instanceof OutOfMemoryError) {
-            getInstance().dumpMemory();
+            getInstance().dumpMemory(false);
         }
         if (logToAppCenter && BuildVars.DEBUG_VERSION && needSent(e)) {
             AndroidUtilities.appCenterLog(e);

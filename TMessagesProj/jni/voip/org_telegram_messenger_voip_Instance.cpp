@@ -546,6 +546,63 @@ JNIEXPORT jlong JNICALL Java_org_telegram_messenger_voip_NativeInstance_makeGrou
     return reinterpret_cast<jlong>(holder);
 }
 
+extern "C" JNIEXPORT jbyteArray JNICALL Java_org_telegram_messenger_voip_GroupCallMessagesController_groupCallMessageDecryptImpl(
+    JNIEnv *env, jclass clazz,
+    jlong callId,
+    jlong userId,
+    jbyteArray encrypted
+) {
+    jsize length = env->GetArrayLength(encrypted);
+    std::vector<uint8_t> data(length);
+    env->GetByteArrayRegion(encrypted, 0, length, reinterpret_cast<jbyte*>(data.data()));
+
+    auto result = tde2e_api::call_decrypt(
+        callId,
+        userId,
+        0,
+        std::string_view{ (const char*) data.data(), data.size() }
+    );
+
+    if (result.is_ok()) {
+        auto str = result.value();
+
+        jbyteArray byteArray = env->NewByteArray(str.size());
+        if (byteArray == nullptr) {
+            return nullptr;
+        }
+        env->SetByteArrayRegion(byteArray, 0, str.size(), reinterpret_cast<const jbyte*>(str.data()));
+        return byteArray;
+    } else {
+        DEBUG_D("[tde2e] e2eEncryptDecrypt failed: err %s", result.error().message.c_str());
+        return nullptr;
+    }
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL Java_org_telegram_messenger_voip_GroupCallMessagesController_groupCallMessageEncryptImpl(
+        JNIEnv *env, jclass clazz,
+        jlong callId,
+        jbyteArray decrypted
+) {
+    jsize length = env->GetArrayLength(decrypted);
+    std::vector<uint8_t> data(length);
+    env->GetByteArrayRegion(decrypted, 0, length, reinterpret_cast<jbyte*>(data.data()));
+
+    auto result = tde2e_api::call_encrypt(callId, 0, std::string_view{ (const char*) data.data(), data.size() }, 0);
+    if (result.is_ok()) {
+        auto str = result.value();
+
+        jbyteArray byteArray = env->NewByteArray(str.size());
+        if (byteArray == nullptr) {
+            return nullptr;
+        }
+        env->SetByteArrayRegion(byteArray, 0, str.size(), reinterpret_cast<const jbyte*>(str.data()));
+        return byteArray;
+    } else {
+        DEBUG_D("[tde2e] e2eEncryptDecrypt failed: err %s", result.error().message.c_str());
+        return nullptr;
+    }
+}
+
 extern "C"
 JNIEXPORT void JNICALL Java_org_telegram_messenger_voip_NativeInstance_setJoinResponsePayload(JNIEnv *env, jobject obj, jstring payload) {
     InstanceHolder *instance = getInstanceHolder(env, obj);
@@ -678,7 +735,20 @@ JNIEXPORT void JNICALL Java_org_telegram_messenger_voip_NativeInstance_setVideoE
 }
 
 extern "C"
-JNIEXPORT jlong JNICALL Java_org_telegram_messenger_voip_NativeInstance_makeNativeInstance(JNIEnv *env, jclass clazz, jstring version, jobject instanceObj, jobject config, jstring persistentStateFilePath, jobjectArray endpoints, jobject proxyClass, jint networkType, jobject encryptionKey, jobject remoteSink, jlong videoCapturer, jfloat aspectRatio) {
+JNIEXPORT jlong JNICALL Java_org_telegram_messenger_voip_NativeInstance_makeNativeInstance(
+    JNIEnv *env, jclass clazz,
+    jstring version,
+    jobject instanceObj,
+    jobject config,
+    jstring persistentStateFilePath,
+    jobjectArray endpoints,
+    jobject proxyClass,
+    jint networkType,
+    jobject encryptionKey,
+    jobject remoteSink,
+    jlong videoCapturer,
+    jfloat aspectRatio
+) {
     initWebRTC(env);
 
     JavaObject configObject(env, config);
@@ -720,7 +790,8 @@ JNIEXPORT jlong JNICALL Java_org_telegram_messenger_voip_NativeInstance_makeNati
                     .statsLogPath = {tgvoip::jni::JavaStringToStdString(env, configObject.getStringField("statsLogPath"))},
                     .maxApiLayer = configObject.getIntField("maxApiLayer"),
                     .enableHighBitrateVideo = true,
-                    .preferredVideoCodecs = {cricket::kVp9CodecName}
+                    .preferredVideoCodecs = {cricket::kVp9CodecName},
+                    .customParameters = tgvoip::jni::JavaStringToStdString(env, configObject.getStringField("customParameters"))
             },
             .encryptionKey = EncryptionKey(
                     std::move(encryptionKeyValue),
@@ -1053,6 +1124,12 @@ JNIEXPORT void JNICALL Java_org_telegram_messenger_voip_NativeInstance_clearVide
     InstanceHolder *instance = getInstanceHolder(env, obj);
     if (instance->nativeInstance) {
         instance->nativeInstance->setVideoCapture(nullptr);
+        if (instance->_screenVideoCapture != nullptr) {
+            instance->_screenVideoCapture = nullptr;
+        }
+        if (instance->_videoCapture != nullptr) {
+            instance->_videoCapture = nullptr;
+        }
     } else if (instance->groupNativeInstance) {
         instance->groupNativeInstance->setVideoSource(nullptr);
     }
@@ -1191,4 +1268,24 @@ Java_org_telegram_messenger_voip_NativeInstance_setConferenceCallId(JNIEnv *env,
     }
     DEBUG_D("setConferenceCallId %d", call_id);
     *instance->conferenceCallId = (long) call_id;
+}
+
+extern "C"
+JNIEXPORT jobjectArray JNICALL
+Java_org_telegram_messenger_voip_NativeInstance_getAllVersions(JNIEnv* env) {
+    std::vector<std::string> v = tgcalls::Meta::Versions();
+    jclass stringClass = env->FindClass("java/lang/String");
+    if (!stringClass) {
+        return nullptr;
+    }
+    jobjectArray result = env->NewObjectArray(v.size(), stringClass, nullptr);
+    if (!result) {
+        return nullptr;
+    }
+    for (size_t i = 0; i < v.size(); ++i) {
+        jstring str = env->NewStringUTF(v[i].c_str());
+        env->SetObjectArrayElement(result, i, str);
+        env->DeleteLocalRef(str);
+    }
+    return result;
 }

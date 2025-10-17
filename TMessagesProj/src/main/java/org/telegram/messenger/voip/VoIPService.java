@@ -117,6 +117,7 @@ import org.telegram.messenger.UserConfig;
 import org.telegram.messenger.UserObject;
 import org.telegram.messenger.Utilities;
 import org.telegram.messenger.XiaomiUtilities;
+import org.telegram.messenger.utils.tlutils.TlUtils;
 import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.SerializedData;
 import org.telegram.tgnet.TLObject;
@@ -365,6 +366,7 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 
 	private boolean needSendDebugLog;
 	private boolean needRateCall;
+	private String lastLogFilePath;
 	private long lastTypingTimeSend;
 
 	private boolean endCallAfterRequest;
@@ -1097,7 +1099,7 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 				reqCall.protocol.udp_reflector = true;
 				reqCall.protocol.min_layer = CALL_MIN_LAYER;
 				reqCall.protocol.max_layer = Instance.getConnectionMaxLayer();
-				reqCall.protocol.library_versions.addAll(Instance.AVAILABLE_VERSIONS);
+				Collections.addAll(reqCall.protocol.library_versions, NativeInstance.getAllVersions());
 				VoIPService.this.g_a = g_a;
 				reqCall.g_a_hash = Utilities.computeSHA256(g_a, 0, g_a.length);
 				reqCall.random_id = Utilities.random.nextInt();
@@ -1600,6 +1602,10 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 				FileLog.e(e);
 			}
 		}
+		if (conference != null) {
+			groupCall.processGroupCallUpdate(call);
+		}
+
 		if ((currentState == STATE_WAIT_INIT || newModeStreaming != currentGroupModeStreaming) && myParams != null) {
 			if (tgVoip[CAPTURE_DEVICE_CAMERA] == null) {
 				lastGroupCallUpdate = call;
@@ -1674,6 +1680,10 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 			needRateCall = phoneCall.need_rating;
 			if (BuildVars.LOGS_ENABLED) {
 				FileLog.d("call discarded, stopping service");
+			}
+			final MessagesController messagesController = MessagesController.getInstance(currentAccount);
+			if (messagesController.voipDebug != null) {
+				messagesController.voipDebug.done(phoneCall.id, phoneCall.need_debug);
 			}
 			if (phoneCall.reason instanceof TLRPC.TL_phoneCallDiscardReasonMigrateConferenceCall) {
 				final TLRPC.TL_phoneCallDiscardReasonMigrateConferenceCall reason = (TLRPC.TL_phoneCallDiscardReasonMigrateConferenceCall) phoneCall.reason;
@@ -1855,7 +1865,7 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 		req.protocol.max_layer = Instance.getConnectionMaxLayer();
 		req.protocol.min_layer = CALL_MIN_LAYER;
 		req.protocol.udp_p2p = req.protocol.udp_reflector = true;
-		req.protocol.library_versions.addAll(Instance.AVAILABLE_VERSIONS);
+		Collections.addAll(req.protocol.library_versions, NativeInstance.getAllVersions());
 		ConnectionsManager.getInstance(currentAccount).sendRequest(req, (response, error) -> AndroidUtilities.runOnUIThread(() -> {
 			if (error != null) {
 				callFailed();
@@ -2148,7 +2158,7 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 					conference.inputGroupCall = new TLRPC.TL_inputGroupCall();
 					conference.inputGroupCall.id = groupCall1.id;
 					conference.inputGroupCall.access_hash = groupCall1.access_hash;
-					conference.groupCall = groupCall1;
+					conference.groupCall = TlUtils.applyGroupCallUpdate(conference.groupCall, groupCall1);
 					startConferenceGroupCall(false, 0, null, false);
 					if (inviteUsersToConference != null) {
 						for (long userId : inviteUsersToConference) {
@@ -2323,7 +2333,7 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 								groupCall.setCall(AccountInstance.getInstance(currentAccount), 0, groupCall1);
 							}
 							if (conference != null) {
-								conference.groupCall = groupCall1;
+								conference.groupCall = TlUtils.applyGroupCallUpdate(conference.groupCall, groupCall1);
 							}
 						}
 
@@ -3397,7 +3407,8 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 			final boolean enableNs = !(sysNsAvailable && serverConfig.useSystemNs);
 			final String logFilePath = BuildVars.DEBUG_VERSION ? VoIPHelper.getLogFilePath("voip" + privateCall.id) : VoIPHelper.getLogFilePath("" + privateCall.id, false);
 			final String statsLogFilePath = VoIPHelper.getLogFilePath("" + privateCall.id, true);
-			final Instance.Config config = new Instance.Config(initializationTimeout, receiveTimeout, voipDataSaving, privateCall.p2p_allowed, enableAec, enableNs, true, false, serverConfig.enableStunMarking, logFilePath, statsLogFilePath, privateCall.protocol.max_layer);
+			final Instance.Config config = new Instance.Config(initializationTimeout, receiveTimeout, voipDataSaving, privateCall.p2p_allowed, enableAec, enableNs, true, false, serverConfig.enableStunMarking, logFilePath, statsLogFilePath, privateCall.protocol.max_layer, privateCall.custom_parameters == null ? "" : privateCall.custom_parameters.data);
+			lastLogFilePath = logFilePath;
 
 			// persistent state
 			final String persistentStateFilePath = new File(ApplicationLoader.applicationContext.getCacheDir(), "voip_persistent_state.json").getAbsolutePath();
@@ -4342,7 +4353,7 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 				req1.protocol.udp_p2p = req1.protocol.udp_reflector = true;
 				req1.protocol.min_layer = CALL_MIN_LAYER;
 				req1.protocol.max_layer = Instance.getConnectionMaxLayer();
-				req1.protocol.library_versions.addAll(Instance.AVAILABLE_VERSIONS);
+				Collections.addAll(req1.protocol.library_versions, NativeInstance.getAllVersions());
 				ConnectionsManager.getInstance(currentAccount).sendRequest(req1, (response1, error1) -> AndroidUtilities.runOnUIThread(() -> {
 					if (error1 == null) {
 						if (BuildVars.LOGS_ENABLED) {
@@ -4575,7 +4586,7 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 	}
 
 	private void onTgVoipStop(Instance.FinalState finalState) {
-		if (user == null) {
+		if (user == null || privateCall == null || finalState == null) {
 			return;
 		}
 		if (TextUtils.isEmpty(finalState.debugLog)) {
@@ -4585,18 +4596,15 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 				e.printStackTrace();
 			}
 		}
-		if (needSendDebugLog && finalState.debugLog != null) {
-			TL_phone.saveCallDebug req = new TL_phone.saveCallDebug();
-			req.debug = new TLRPC.TL_dataJSON();
-			req.debug.data = finalState.debugLog;
-			req.peer = new TLRPC.TL_inputPhoneCall();
-			req.peer.access_hash = privateCall.access_hash;
-			req.peer.id = privateCall.id;
-			ConnectionsManager.getInstance(currentAccount).sendRequest(req, (response, error) -> {
-				if (BuildVars.LOGS_ENABLED) {
-					FileLog.d("Sent debug logs, response = " + response);
-				}
-			});
+		final MessagesController messagesController = MessagesController.getInstance(currentAccount);
+		if (messagesController.voipDebug == null) {
+			messagesController.voipDebug = new VoIPDebugToSend(currentAccount);
+		}
+		messagesController.voipDebug.push(privateCall.id, privateCall.access_hash, finalState, lastLogFilePath);
+		lastLogFilePath = null;
+
+		if (needSendDebugLog) {
+			messagesController.voipDebug.done(privateCall.id, needSendDebugLog);
 			needSendDebugLog = false;
 		}
 	}
