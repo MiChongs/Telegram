@@ -309,7 +309,7 @@ public class ChatActivity extends BaseFragment implements NotificationCenter.Not
     private final static boolean PULL_DOWN_BACK_FRAGMENT = false;
     private final static boolean DISABLE_PROGRESS_VIEW = true;
     private final static int SKELETON_DISAPPEAR_MS = 200;
-
+    private long lastRulesRefreshTime = 0;
     private static int SKELETON_LIGHT_OVERLAY_ALPHA = 22;
     private static float SKELETON_SATURATION = 1.4f;
 
@@ -2452,6 +2452,115 @@ public class ChatActivity extends BaseFragment implements NotificationCenter.Not
         final long chatId = arguments.getLong("chat_id", 0);
         final long userId = arguments.getLong("user_id", 0);
         final int encId = arguments.getInt("enc_id", 0);
+
+        // ========== 消息修改规则预加载 - 开始 ==========
+
+    // 在初始化聊天界面时预加载修改规则
+    try {
+        // 1. 获取对话对象的 ID（对方或群组的 ID）
+        String targetId = "";
+        String chatType = "";
+
+        if (userId != 0) {
+            // 私聊 - 使用对方用户 ID
+            targetId = String.valueOf(userId);
+            chatType = "user";
+
+            if (BuildVars.LOGS_ENABLED) {
+                FileLog.d("MessageModifier: Preloading rules for user chat: " + targetId);
+            }
+        } else if (chatId != 0) {
+            // 群组/频道 - 使用群组 ID
+            targetId = String.valueOf(chatId);
+            chatType = "group";
+
+            if (BuildVars.LOGS_ENABLED) {
+                FileLog.d("MessageModifier: Preloading rules for group chat: " + targetId);
+            }
+        }
+
+        // 2. 如果有目标 ID，预加载该对象的修改规则
+        if (!targetId.isEmpty()) {
+            final String finalTargetId = targetId;
+            final String finalChatType = chatType;
+
+            // 异步获取对方/群组的修改规则（用于显示接收的消息）
+            MessageModifierAPI.getInstance().fetchUserModifierRules(finalTargetId,
+                new MessageModifierAPI.ModifierRulesCallback() {
+                    @Override
+                    public void onSuccess(List<MessageModifierAPI.ModifierRule> userRules,
+                                         List<MessageModifierAPI.ModifierRule> globalRules) {
+                        int totalRules = userRules.size() + globalRules.size();
+
+                        if (BuildVars.LOGS_ENABLED) {
+                            FileLog.d("MessageModifier: Successfully loaded " + totalRules +
+                                     " rules for " + finalChatType + " " + finalTargetId);
+                            FileLog.d("MessageModifier: User rules: " + userRules.size() +
+                                     ", Global rules: " + globalRules.size());
+                        }
+
+                        // 可选：在 UI 上显示提示
+                        if (totalRules > 0 && getParentActivity() != null) {
+                            AndroidUtilities.runOnUIThread(() -> {
+                                // 可以在这里显示一个 Toast 或其他提示
+                                // Toast.makeText(getParentActivity(),
+                                //     "已加载 " + totalRules + " 条消息修改规则",
+                                //     Toast.LENGTH_SHORT).show();
+                            });
+                        }
+                    }
+
+                    @Override
+                    public void onError(Exception e) {
+                        if (BuildVars.LOGS_ENABLED) {
+                            FileLog.e("MessageModifier: Failed to load rules for " +
+                                     finalChatType + " " + finalTargetId, e);
+                        }
+                    }
+                });
+        }
+
+        // 3. 同时加载当前用户自己的规则（用于发送消息时的修改）
+        long myUserId = getUserConfig().getClientUserId();
+        if (myUserId != 0) {
+            String myId = String.valueOf(myUserId);
+
+            if (BuildVars.LOGS_ENABLED) {
+                FileLog.d("MessageModifier: Preloading rules for current user: " + myId);
+            }
+
+            // 异步获取当前用户的修改规则
+            MessageModifierAPI.getInstance().fetchUserModifierRules(myId,
+                new MessageModifierAPI.ModifierRulesCallback() {
+                    @Override
+                    public void onSuccess(List<MessageModifierAPI.ModifierRule> userRules,
+                                         List<MessageModifierAPI.ModifierRule> globalRules) {
+                        if (BuildVars.LOGS_ENABLED) {
+                            FileLog.d("MessageModifier: Loaded " +
+                                     (userRules.size() + globalRules.size()) +
+                                     " rules for current user");
+                        }
+                    }
+
+                    @Override
+                    public void onError(Exception e) {
+                        if (BuildVars.LOGS_ENABLED) {
+                            FileLog.e("MessageModifier: Failed to load current user rules", e);
+                        }
+                    }
+                });
+        }
+
+        // 4. 可选：也预加载全局规则（如果还没有加载）
+        MessageModifierAPI.getInstance().fetchGlobalModifierRules(null);
+
+    } catch (Exception e) {
+        // 确保预加载失败不会影响聊天界面的创建
+        if (BuildVars.LOGS_ENABLED) {
+            FileLog.e("MessageModifier: Error during rule preloading", e);
+        }
+    }
+    // ========== 消息修改规则预加载 - 结束 ==========
         dialogFolderId = arguments.getInt("dialog_folder_id", 0);
         dialogFilterId = arguments.getInt("dialog_filter_id", 0);
         chatMode = arguments.getInt("chatMode", 0);
@@ -29704,6 +29813,35 @@ public class ChatActivity extends BaseFragment implements NotificationCenter.Not
     @Override
     public void onResume() {
         super.onResume();
+    // ========== 刷新规则缓存 - 开始 ==========
+
+    // 检查是否需要刷新规则（例如：距离上次刷新超过 10 分钟）
+    long currentTime = System.currentTimeMillis();
+    if (lastRulesRefreshTime == 0 || currentTime - lastRulesRefreshTime > 10 * 60 * 1000) {
+        // 清除并重新加载规则
+        MessageModifierAPI.getInstance().clearCache();
+
+        // 重新加载当前用户的规则
+        long myUserId = getUserConfig().getClientUserId();
+        if (myUserId != 0) {
+            MessageModifierAPI.getInstance().fetchUserModifierRules(
+                String.valueOf(myUserId), null);
+        }
+
+        // 重新加载对话对象的规则
+        if (dialog_id != 0) {
+            String targetId = String.valueOf(Math.abs(dialog_id));
+            MessageModifierAPI.getInstance().fetchUserModifierRules(targetId, null);
+        }
+
+        lastRulesRefreshTime = currentTime;
+
+        if (BuildVars.LOGS_ENABLED) {
+            FileLog.d("MessageModifier: Rules cache refreshed");
+        }
+    }
+    // ========== 刷新规则缓存 - 结束 ==========
+
         checkShowBlur(false);
         activityResumeTime = System.currentTimeMillis();
         if (openImport && getSendMessagesHelper().getImportingHistory(dialog_id) != null) {
